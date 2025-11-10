@@ -301,7 +301,7 @@ func extractOAuth2Args(msg *message.Message, readClientInfoFromMessages bool) (O
 		temp := ""
 		clientsecret = &temp
 	}
-	return OAuthArgs{ssl: ssl, host: host, oidc_callback_host: oidcCallbackDomain, pathq: pathq,
+	return OAuthArgs{ssl: ssl, host: host, oidc_callback_host: oidcCallbackHost, pathq: pathq,
 			cookie: cookie, clientid: *clientid,
 			clientsecret: *clientsecret, redirecturl: *redirecturl,
 			tokenClaims: tokenClaims},

@@ -82,15 +82,15 @@ type OIDCAuthenticator struct {
 }
 
 type OAuthArgs struct {
-	ssl                  bool
-	host                 string
+	ssl                bool
+	host               string
 	oidc_callback_host string
-	pathq                string
-	clientid             string
-	clientsecret         string
-	redirecturl          string
-	cookie               string
-	tokenClaims          []string
+	pathq              string
+	clientid           string
+	clientsecret       string
+	redirecturl        string
+	cookie             string
+	tokenClaims        []string
 }
 
 // NewOIDCAuthenticator create an instance of an OIDC authenticator

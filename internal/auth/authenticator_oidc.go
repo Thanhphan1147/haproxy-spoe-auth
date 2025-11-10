@@ -66,6 +66,7 @@ type State struct {
 	Timestamp          time.Time
 	Signature          string
 	PathAndQueryString string
+	Host               string
 	SSL                bool
 }
 
@@ -81,14 +82,15 @@ type OIDCAuthenticator struct {
 }
 
 type OAuthArgs struct {
-	ssl          bool
-	host         string
-	pathq        string
-	clientid     string
-	clientsecret string
-	redirecturl  string
-	cookie       string
-	tokenClaims  []string
+	ssl                bool
+	host               string
+	oidc_callback_host string
+	pathq              string
+	clientid           string
+	clientsecret       string
+	redirecturl        string
+	cookie             string
+	tokenClaims        []string
 }
 
 // NewOIDCAuthenticator create an instance of an OIDC authenticator
@@ -185,44 +187,50 @@ func (oa *OIDCAuthenticator) decryptCookie(cookieValue string, domain string) (*
 }
 
 func extractOAuth2Args(msg *message.Message, readClientInfoFromMessages bool) (OAuthArgs, error) {
-	var cookie string
+	var cookie, oidcCallbackHost string
 	var clientid, clientsecret, redirecturl *string
 	var tokenClaims []string
 
 	// ssl
 	sslValue, ok := msg.KV.Get("arg_ssl")
 	if !ok {
-		return OAuthArgs{ssl: false, host: "", pathq: "", cookie: "", clientid: "", clientsecret: "", redirecturl: ""},
+		return OAuthArgs{ssl: false, host: "", oidc_callback_host: "", pathq: "", cookie: "", clientid: "", clientsecret: "", redirecturl: ""},
 			ErrSSLArgNotFound
 	}
 	ssl, ok := sslValue.(bool)
 	if !ok {
-		return OAuthArgs{ssl: false, host: "", pathq: "", cookie: "", clientid: "", clientsecret: "", redirecturl: ""},
+		return OAuthArgs{ssl: false, host: "", oidc_callback_host: "", pathq: "", cookie: "", clientid: "", clientsecret: "", redirecturl: ""},
 			fmt.Errorf("SSL is not a bool: %v", sslValue)
 	}
 
 	// host
 	hostValue, ok := msg.KV.Get("arg_host")
 	if !ok {
-		return OAuthArgs{ssl: false, host: "", pathq: "", cookie: "", clientid: "", clientsecret: "", redirecturl: ""},
+		return OAuthArgs{ssl: false, host: "", oidc_callback_host: "", pathq: "", cookie: "", clientid: "", clientsecret: "", redirecturl: ""},
 			ErrHostArgNotFound
 	}
 	host, ok := hostValue.(string)
 	if !ok {
-		return OAuthArgs{ssl: false, host: "", pathq: "", cookie: "", clientid: "", clientsecret: "", redirecturl: ""},
+		return OAuthArgs{ssl: false, host: "", oidc_callback_host: "", pathq: "", cookie: "", clientid: "", clientsecret: "", redirecturl: ""},
 			fmt.Errorf("host is not a string: %v", hostValue)
 	}
 
 	// pathq
 	pathqValue, ok := msg.KV.Get("arg_pathq")
 	if !ok {
-		return OAuthArgs{ssl: false, host: "", pathq: "", cookie: "", clientid: "", clientsecret: "", redirecturl: ""},
+		return OAuthArgs{ssl: false, host: "", oidc_callback_host: "", pathq: "", cookie: "", clientid: "", clientsecret: "", redirecturl: ""},
 			ErrPathqArgNotFound
 	}
 	pathq, ok := pathqValue.(string)
 	if !ok {
-		return OAuthArgs{ssl: false, host: "", pathq: "", cookie: "", clientid: "", clientsecret: "", redirecturl: ""},
+		return OAuthArgs{ssl: false, host: "", oidc_callback_host: "", pathq: "", cookie: "", clientid: "", clientsecret: "", redirecturl: ""},
 			fmt.Errorf("pathq is not a string: %v", pathqValue)
+	}
+
+	// oidc_callback_host
+	oidcCallbackHostValue, ok := msg.KV.Get("arg_oidc_callback_host")
+	if ok {
+		oidcCallbackHost, _ = oidcCallbackHostValue.(string)
 	}
 
 	// cookie
@@ -293,7 +301,7 @@ func extractOAuth2Args(msg *message.Message, readClientInfoFromMessages bool) (O
 		temp := ""
 		clientsecret = &temp
 	}
-	return OAuthArgs{ssl: ssl, host: host, pathq: pathq,
+	return OAuthArgs{ssl: ssl, host: host, oidc_callback_host: oidcCallbackHost, pathq: pathq,
 			cookie: cookie, clientid: *clientid,
 			clientsecret: *clientsecret, redirecturl: *redirecturl,
 			tokenClaims: tokenClaims},
@@ -327,7 +335,11 @@ func (oa *OIDCAuthenticator) Authenticate(msg *message.Message) (bool, []action.
 		return false, nil, fmt.Errorf("unable to extract origin URL: %v", err)
 	}
 
-	domain := extractDomainFromHost(oauthArgs.host)
+	host := oauthArgs.host
+	if oauthArgs.oidc_callback_host != "" {
+		host = oauthArgs.oidc_callback_host
+	}
+	domain := extractDomainFromHost(host)
 
 	if oauthArgs.clientid != "" {
 		oa.options.ClientsStore.AddClient(domain, oauthArgs.clientid, oauthArgs.clientsecret, oauthArgs.redirecturl)
@@ -389,6 +401,7 @@ func (oa *OIDCAuthenticator) buildAuthorizationURL(domain string, oauthArgs OAut
 	state.Timestamp = currentTime
 	state.PathAndQueryString = oauthArgs.pathq
 	state.SSL = oauthArgs.ssl
+	state.Host = oauthArgs.host
 	state.Signature = oa.computeStateSignature(&state)
 
 	stateBytes, err := msgpack.Marshal(state)
@@ -502,7 +515,11 @@ func (oa *OIDCAuthenticator) handleOAuth2Callback(tmpl *template.Template, error
 		if !state.SSL {
 			scheme = "http"
 		}
-		url := fmt.Sprintf("%s://%s%s", scheme, r.Host, state.PathAndQueryString)
+		destination_host := state.Host
+		if destination_host == "" {
+			destination_host = r.Host
+		}
+		url := fmt.Sprintf("%s://%s%s", scheme, destination_host, state.PathAndQueryString)
 		logrus.Debugf("target url request by user %s", url)
 		signature := oa.computeStateSignature(&state)
 		if signature != state.Signature {
@@ -536,6 +553,7 @@ func (oa *OIDCAuthenticator) handleOAuth2Callback(tmpl *template.Template, error
 			Value:    encryptedIDToken,
 			Path:     "/",
 			Expires:  expiry,
+			Domain:   destination_host,
 			HttpOnly: true,
 			Secure:   oa.options.CookieSecure,
 		}

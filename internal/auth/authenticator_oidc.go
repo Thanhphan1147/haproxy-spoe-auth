@@ -187,7 +187,7 @@ func (oa *OIDCAuthenticator) decryptCookie(cookieValue string, domain string) (*
 }
 
 func extractOAuth2Args(msg *message.Message, readClientInfoFromMessages bool) (OAuthArgs, error) {
-	var cookie, oidcCallbackDomain string
+	var cookie, oidcCallbackHost string
 	var clientid, clientsecret, redirecturl *string
 	var tokenClaims []string
 
